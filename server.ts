@@ -29,9 +29,9 @@ Rules:
 Story Content:
 ${text}`;
 
-    const result = await genAI.models.generateContent({ 
-      model: modelId, 
-      contents: prompt 
+    const result = await genAI.models.generateContent({
+      model: modelId,
+      contents: prompt
     });
     return result.text || text;
   } catch (error) {
@@ -76,7 +76,7 @@ async function extractStory(url: string) {
   }
 
   let content = '';
-  
+
   // Try known containers first
   const container = $('.reading-content, .chapter-c, .story-detail-content, #chapter-c, .box-chap, .content-story, .chapter-content, #chapter-content');
 
@@ -100,7 +100,7 @@ async function extractStory(url: string) {
         content += text + '\n\n';
       }
     });
-    
+
     if (!content) {
       content = container.text().trim().replace(/\n\s*\n/g, '\n\n');
     }
@@ -118,7 +118,7 @@ async function extractStory(url: string) {
   // Manual cleanup for known ads
   content = content.replace(/Mời bạn CLICK vào liên kết bên dưới và.*/gi, '');
   content = content.replace(/Mời bạn ủng hộ.*/gi, '');
-  
+
   // Truncate at the Shopee app unlock message
   const shopeeUnlockMsg = "MỞ ỨNG DỤNG SHOPEE để mở khóa toàn bộ chương truyện!";
   if (content.includes(shopeeUnlockMsg)) {
@@ -138,8 +138,8 @@ async function extractStory(url: string) {
 
     const p = paragraphs[i];
     const lowerP = p.toLowerCase();
-    
-    // Improved detection for ads
+
+    // Improved detection for ad
     if (lowerP.includes('shopee') || lowerP.includes('tiktok') || lowerP.includes('khám phá thêm')) {
       skipNext = true;
       continue;
@@ -154,8 +154,8 @@ async function extractStory(url: string) {
     content = await cleanTextWithAI(content);
   }
 
-  return { 
-    title: chapterTitle || pageTitle, 
+  return {
+    title: chapterTitle || pageTitle,
     storyTitle: storyTitle || 'Unknown Story',
     chapterTitle: chapterTitle || 'Unknown Chapter',
     text: content.trim() || 'Warning: No content could be extracted from this page.'
@@ -167,7 +167,7 @@ app.all('/api/extract', async (req, res) => {
   try {
     const url = req.query.url || req.body.url;
     console.log(`[API] Extracting: ${url}`);
-    
+
     if (!url || typeof url !== 'string') {
       return res.status(400).json({ error: 'URL is required. Send as ?url=... or {"url": "..."}' });
     }
@@ -180,7 +180,7 @@ app.all('/api/extract', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     console.error('[API] Extract error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: error.message || 'Internal Server Error',
       details: error.stack?.split('\n')[0], // Basic diagnostic
       context: 'Check your Vercel Environment Variables and ensure GEMINI_API_KEY is set.'
@@ -208,43 +208,43 @@ app.get('/api/auth/url', (req, res) => {
   if (!process.env.CLIENT_ID || !process.env.CLIENT_SECRET) {
     return res.status(500).json({ error: 'Google OAuth credentials not configured in environment variables.' });
   }
-  
+
   const oauth2Client = new google.auth.OAuth2(
     process.env.CLIENT_ID,
     process.env.CLIENT_SECRET,
     redirectUri
   );
-  
+
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: ['https://www.googleapis.com/auth/spreadsheets'],
     prompt: 'consent',
     state: redirectUri
   });
-  
+
   res.json({ url });
 });
 
 app.get(['/auth/callback', '/auth/callback/'], async (req, res) => {
   const { code, state } = req.query;
   const redirectUri = state as string;
-  
+
   try {
     const oauth2Client = new google.auth.OAuth2(
       process.env.CLIENT_ID,
       process.env.CLIENT_SECRET,
       redirectUri
     );
-    
+
     const { tokens } = await oauth2Client.getToken(code as string);
-    
+
     res.cookie('google_tokens', JSON.stringify(tokens), {
       secure: true,
       sameSite: 'none',
       httpOnly: true,
       maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
     });
-    
+
     res.send(`
       <html>
         <body>
