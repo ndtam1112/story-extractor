@@ -9,11 +9,23 @@ import cookieParser from 'cookie-parser';
 import { GoogleGenAI } from "@google/genai";
 
 const app = express();
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+
+console.log('[Init] Initializing GoogleGenAI...');
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 const modelId = "gemini-3-flash-preview";
 
 app.use(express.json());
 app.use(cookieParser());
+
+// Basic health check for Vercel debugging
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'online',
+    hasApiKey: !!process.env.GEMINI_API_KEY,
+    nodeVersion: process.version,
+    env: process.env.NODE_ENV
+  });
+});
 
 async function cleanTextWithAI(text: string): Promise<string> {
   try {
@@ -173,7 +185,10 @@ app.all('/api/extract', async (req, res) => {
     }
 
     if (!process.env.GEMINI_API_KEY) {
-      console.warn('[API] Warning: GEMINI_API_KEY is not set.');
+      return res.status(500).json({ 
+        error: 'GEMINI_API_KEY is not configured.',
+        context: 'Please set the GEMINI_API_KEY environment variable in your Vercel Dashboard Settings.'
+      });
     }
 
     const result = await extractStory(url);
