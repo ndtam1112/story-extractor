@@ -3,6 +3,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import * as cheerio from 'cheerio';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
 import cookieParser from 'cookie-parser';
 import { GoogleGenAI } from "@google/genai";
@@ -44,8 +45,6 @@ async function extractStory(url: string) {
   const response = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
     }
   });
 
@@ -57,38 +56,46 @@ async function extractStory(url: string) {
   const $ = cheerio.load(html);
 
   let pageTitle = $('title').text().trim() || 'Extracted Story';
-  let storyTitle = '';
-  let chapterTitle = '';
+  let storyTitle = $('.truyen-title, .breadcrumb li:nth-child(2) a, a[href*="/truyen/"], #truyen-title').first().text().trim();
+  let chapterTitle = $('.chapter-title, h1.chapter-title, .title-chapter, h1').first().text().trim();
 
-  // Strategy 1: Parse from <title> tag (e.g., "Chương 2: Tên Chương - Tên Truyện - Site")
-  if (pageTitle.includes('-')) {
-    const parts = pageTitle.split('-').map(p => p.trim());
-    chapterTitle = parts[0]; // "Chương 2: Tên Chương"
-    if (parts.length > 1) {
-      storyTitle = parts[1]; // "Tên Truyện"
+  // Strategy 1: Parse from <title> tag if titles are missing
+  if (!storyTitle || !chapterTitle) {
+    if (pageTitle.includes('-')) {
+      const parts = pageTitle.split('-').map(p => p.trim());
+      if (!chapterTitle) chapterTitle = parts[0];
+      if (!storyTitle && parts.length > 1) {
+        storyTitle = parts[1];
+      }
     }
-  } else {
-    chapterTitle = pageTitle;
   }
 
-  // Strategy 2: Look for specific elements if Strategy 1 was incomplete
-  if (!storyTitle) {
-    // Try breadcrumbs or specific links
-    storyTitle = $('.breadcrumb li:nth-child(2) a, a[href*="/truyen/"], .truyen-title').first().text().trim();
-  }
-
-  // Clean up chapterTitle: remove everything after the dash if it was still there
-  if (chapterTitle.includes('-')) {
+  // Clean up chapterTitle
+  if (chapterTitle && chapterTitle.includes('-')) {
     chapterTitle = chapterTitle.split('-')[0].trim();
   }
 
   let content = '';
   
-  const container = $('.reading-content, .chapter-c, .story-detail-content, #chapter-c, .box-chap, .content-story');
+  // Try known containers first
+  const container = $('.reading-content, .chapter-c, .story-detail-content, #chapter-c, .box-chap, .content-story, .chapter-content, #chapter-content');
+
+  const processElement = (el: any) => {
+    let text = '';
+    // Handle fragmented text from sites like vivutruyen2.net
+    if ($(el).find('.goog-rentry, .google-anno-skip').length > 0) {
+      $(el).find('.goog-rentry, .google-anno-skip').each((_, skip) => {
+        text += $(skip).text() + ' ';
+      });
+    } else {
+      text = $(el).text();
+    }
+    return text.trim();
+  };
 
   if (container.length > 0) {
-    container.find('p').each((i, el) => {
-      const text = $(el).text().trim();
+    container.find('p, div.goog-rentry, .google-anno-skip').each((i, el) => {
+      const text = processElement(el);
       if (text) {
         content += text + '\n\n';
       }
@@ -98,16 +105,19 @@ async function extractStory(url: string) {
       content = container.text().trim().replace(/\n\s*\n/g, '\n\n');
     }
   } else {
-    $('body p').each((i, el) => {
-      const text = $(el).text().trim();
-      if (text) {
+    // Fallback: search for all paragraphs or goog-rentry divs that likely contain story text
+    $('p, div.goog-rentry, .google-anno-skip').each((i, el) => {
+      const text = processElement(el);
+      // Heuristic: ignore short texts or nav-like texts
+      if (text && text.length > 20) {
         content += text + '\n\n';
       }
     });
   }
 
-  // Manual cleanup first for speed and reliability
+  // Manual cleanup for known ads
   content = content.replace(/Mời bạn CLICK vào liên kết bên dưới và.*/gi, '');
+  content = content.replace(/Mời bạn ủng hộ.*/gi, '');
   
   // Truncate at the Shopee app unlock message
   const shopeeUnlockMsg = "MỞ ỨNG DỤNG SHOPEE để mở khóa toàn bộ chương truyện!";
@@ -129,7 +139,8 @@ async function extractStory(url: string) {
     const p = paragraphs[i];
     const lowerP = p.toLowerCase();
     
-    if (lowerP.includes('shopee') || lowerP.includes('tiktok')) {
+    // Improved detection for ads
+    if (lowerP.includes('shopee') || lowerP.includes('tiktok') || lowerP.includes('khám phá thêm')) {
       skipNext = true;
       continue;
     }
@@ -138,14 +149,16 @@ async function extractStory(url: string) {
   }
   content = cleanedParagraphs.join('\n\n');
 
-  // Final AI Polish to catch tricky ads
-  content = await cleanTextWithAI(content);
+  // Final AI Polish
+  if (content.trim()) {
+    content = await cleanTextWithAI(content);
+  }
 
   return { 
-    title: chapterTitle, // Keep 'title' for backward compatibility
+    title: chapterTitle || pageTitle, 
     storyTitle: storyTitle || 'Unknown Story',
-    chapterTitle: chapterTitle,
-    text: content.trim() 
+    chapterTitle: chapterTitle || 'Unknown Chapter',
+    text: content.trim() || 'Warning: No content could be extracted from this page.'
   };
 }
 
@@ -153,23 +166,25 @@ async function extractStory(url: string) {
 app.all('/api/extract', async (req, res) => {
   try {
     const url = req.query.url || req.body.url;
+    console.log(`[API] Extracting: ${url}`);
     
     if (!url || typeof url !== 'string') {
       return res.status(400).json({ error: 'URL is required. Send as ?url=... or {"url": "..."}' });
     }
 
-    const apiKey = req.headers['x-api-key'] || req.query.apiKey;
-    const expectedApiKey = process.env.API_KEY;
-    
-    if (expectedApiKey && apiKey !== expectedApiKey) {
-      return res.status(401).json({ error: 'Unauthorized: Invalid API Key' });
+    if (!process.env.GEMINI_API_KEY) {
+      console.warn('[API] Warning: GEMINI_API_KEY is not set.');
     }
 
     const result = await extractStory(url);
     res.json(result);
   } catch (error: any) {
-    console.error('API Extract error:', error);
-    res.status(500).json({ error: error.message || 'Failed to extract content' });
+    console.error('[API] Extract error:', error);
+    res.status(500).json({ 
+      error: error.message || 'Internal Server Error',
+      details: error.stack?.split('\n')[0], // Basic diagnostic
+      context: 'Check your Vercel Environment Variables and ensure GEMINI_API_KEY is set.'
+    });
   }
 });
 
@@ -417,6 +432,10 @@ async function startServer() {
   }
 }
 
-startServer();
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
-export { app };
+if (isMain) {
+  startServer();
+}
+
+export { app, extractStory };
