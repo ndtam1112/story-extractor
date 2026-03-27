@@ -1,0 +1,5 @@
+{
+  "name": "Story Extractor",
+  "description": "Extract text from story websites bypassing copy blocks, export to .txt, and copy for Google Sheets.",
+  "requestFramePermissions": []
+}
