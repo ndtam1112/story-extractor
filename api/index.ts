@@ -210,6 +210,24 @@ async function extractChapters(url: string) {
     // Remove "Bắt Đầu Đọc" or similar buttons if they exist inside the selector
     title = title.replace(/Bắt Đầu Đọc/gi, '').trim();
     
+    // Remove story name from chapter title if it exists
+    if (storyTitle && title.toLowerCase().includes(storyTitle.toLowerCase())) {
+      const regex = new RegExp(storyTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      title = title.replace(regex, '').trim();
+    }
+
+    // Further cleanup: if it starts with "Chương X", try to keep only that part if followed by redundant info
+    const match = title.match(/^(Chương\s+\d+)/i);
+    if (match) {
+      // If the user wants ONLY "Chương X", we could restrict it here. 
+      // But let's be safe and just remove the story title for now as requested.
+      // Wait, user said "chỉ cần lấy Chương 1, không cần tên truyện". 
+      // This implies if it's "Chương 1: ABC", maybe they want "Chương 1"? 
+      // Actually, "Chương 1 Chồng Tôi Phải Lòng Bạn Thân Tôi" -> "Chương 1".
+      // Let's use the match to be more precise if it exists.
+      title = match[0];
+    }
+    
     let href = $(el).attr('href') || $(el).closest('a').attr('href');
     
     if (title && href) {
