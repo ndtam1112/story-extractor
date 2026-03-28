@@ -12,6 +12,8 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [sheetUrl, setSheetUrl] = useState('');
+  const [chapters, setChapters] = useState<{ title: string; url: string }[] | null>(null);
+  const [fetchingChapters, setFetchingChapters] = useState(false);
 
   useEffect(() => {
     checkAuthStatus();
@@ -124,6 +126,78 @@ export default function App() {
     }
   };
 
+  const handleFetchChapters = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!url.trim()) return;
+
+    setFetchingChapters(true);
+    setError('');
+    setChapters(null);
+    setResult(null);
+    setSheetUrl('');
+
+    try {
+      const response = await fetch('/api/fetch-chapters', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: url.trim() }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch chapters');
+      }
+
+      setChapters(data.chapters);
+      if (data.storyTitle && !result) {
+        setResult({ title: data.storyTitle, text: '', storyTitle: data.storyTitle });
+      }
+    } catch (err: any) {
+      setError(err.message || 'An unexpected error occurred while fetching chapters');
+    } finally {
+      setFetchingChapters(false);
+    }
+  };
+
+  const handleSelectChapter = async (chapterUrl: string) => {
+    setUrl(chapterUrl);
+    // Automatically fetch chapter content
+    setLoading(true);
+    setError('');
+    setResult(null);
+    setCopied(false);
+    setSheetUrl('');
+
+    try {
+      const response = await fetch('/api/fetch-story', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: chapterUrl }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch content');
+      }
+
+      setResult(data);
+      // Scroll to result
+      setTimeout(() => {
+        document.getElementById('result-section')?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    } catch (err: any) {
+      setError(err.message || 'An unexpected error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCopy = async () => {
     if (!result?.text) return;
     try {
@@ -207,20 +281,39 @@ export default function App() {
               </div>
             </div>
             
-            <button
-              type="submit"
-              disabled={loading || !url.trim()}
-              className="w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="animate-spin -ml-1 mr-2 h-5 w-5" />
-                  Extracting Content...
-                </>
-              ) : (
-                'Extract Content'
-              )}
-            </button>
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                disabled={loading || fetchingChapters || !url.trim()}
+                className="flex-1 flex items-center justify-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                onClick={handleFetch}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="animate-spin -ml-1 mr-2 h-5 w-5" />
+                    Extracting...
+                  </>
+                ) : (
+                  'Extract Content'
+                )}
+              </button>
+              
+              <button
+                type="button"
+                disabled={loading || fetchingChapters || !url.trim()}
+                className="flex-1 flex items-center justify-center py-3 px-4 border border-neutral-300 rounded-xl shadow-sm text-sm font-medium text-neutral-700 bg-white hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                onClick={handleFetchChapters}
+              >
+                {fetchingChapters ? (
+                  <>
+                    <Loader2 className="animate-spin -ml-1 mr-2 h-5 w-5" />
+                    Fetching Chapters...
+                  </>
+                ) : (
+                  'List Chapters'
+                )}
+              </button>
+            </div>
           </form>
           
           {error && (
@@ -247,9 +340,32 @@ export default function App() {
           )}
         </div>
 
+        {/* Chapters Section */}
+        {chapters && (
+          <div className="bg-white rounded-2xl shadow-sm border border-neutral-200 overflow-hidden">
+            <div className="p-4 border-b border-neutral-200 bg-neutral-50">
+              <h2 className="font-semibold text-neutral-800">Available Chapters ({chapters.length})</h2>
+            </div>
+            <div className="max-h-64 overflow-y-auto p-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                {chapters.map((chapter, index) => (
+                  <button
+                    key={index}
+                    onClick={() => handleSelectChapter(chapter.url)}
+                    className="text-left px-3 py-2 text-sm rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-colors truncate border border-transparent hover:border-blue-100"
+                    title={chapter.title}
+                  >
+                    {chapter.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Result Section */}
-        {result && (
-          <div className="bg-white rounded-2xl shadow-sm border border-neutral-200 overflow-hidden flex flex-col">
+        {result && result.text && (
+          <div id="result-section" className="bg-white rounded-2xl shadow-sm border border-neutral-200 overflow-hidden flex flex-col">
             <div className="p-4 border-b border-neutral-200 bg-neutral-50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex flex-col min-w-0">
                 <h2 className="font-semibold text-neutral-800 truncate" title={result.storyTitle}>

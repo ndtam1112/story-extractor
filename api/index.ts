@@ -169,6 +169,68 @@ async function extractStory(url: string) {
   };
 }
 
+// Helper function to extract chapter list from a story page
+async function extractChapters(url: string) {
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
+  }
+
+  const html = await response.text();
+  const $ = cheerio.load(html);
+
+  const storyTitle = $('.truyen-title, .breadcrumb li:nth-child(2) a, a[href*="/truyen/"], #truyen-title, h1').first().text().trim() || 'Unknown Story';
+  
+  const chapters: { title: string; url: string }[] = [];
+  
+  // Primary selector: .uk-switcher > li.uk-active .list .chap-title
+  // Combined with fallback: .chap-title inside active switcher
+  const activeSwitcher = $('.uk-switcher > li.uk-active');
+  let chapterElements = activeSwitcher.find('.list .chap-title');
+  
+  if (chapterElements.length === 0) {
+    // Fallback search anywhere in active switcher
+    chapterElements = activeSwitcher.find('.chap-title');
+  }
+
+  if (chapterElements.length === 0) {
+    // Broader fallback for other sites
+    chapterElements = $('.chap-title, .chapter-list a, .list-chapter a, a[href*="/chuong-"], a[href*="/chapter-"]');
+  }
+
+  const baseUrl = new URL(url).origin;
+
+  chapterElements.each((_, el) => {
+    let title = $(el).text().trim();
+    // Remove "Bắt Đầu Đọc" or similar buttons if they exist inside the selector
+    title = title.replace(/Bắt Đầu Đọc/gi, '').trim();
+    
+    let href = $(el).attr('href') || $(el).closest('a').attr('href');
+    
+    if (title && href) {
+      if (href.startsWith('/')) {
+        href = baseUrl + href;
+      }
+      chapters.push({ title, url: href });
+    }
+  });
+
+  return {
+    storyTitle,
+    chapters: chapters.filter((c, i, self) => 
+      i === self.findIndex((t) => (t.url === c.url))
+    ).map(c => ({
+      ...c,
+      // Ensure we don't have duplicate titles if titles are same but URLs different (unlikely but safe)
+    }))
+  };
+}
+
 // API endpoint for n8n and other external integrations
 app.all('/api/extract', async (req, res) => {
   try {
@@ -210,6 +272,21 @@ app.post('/api/fetch-story', async (req, res) => {
   } catch (error: any) {
     console.error('Fetch error:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch and parse the URL' });
+  }
+});
+
+app.post('/api/fetch-chapters', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+
+    const result = await extractChapters(url);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Fetch chapters error:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch chapters' });
   }
 });
 
