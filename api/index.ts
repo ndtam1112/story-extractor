@@ -224,7 +224,13 @@ async function extractChapters(url: string) {
     storyTitle,
     chapters: chapters.filter((c, i, self) => 
       i === self.findIndex((t) => (t.url === c.url))
-    ).map(c => ({
+    ).sort((a, b) => {
+      // Natural sort by chapter number
+      const aNum = parseInt(a.title.match(/\d+/)?.[0] || '0');
+      const bNum = parseInt(b.title.match(/\d+/)?.[0] || '0');
+      if (aNum !== bNum) return aNum - bNum;
+      return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+    }).map(c => ({
       ...c,
       // Ensure we don't have duplicate titles if titles are same but URLs different (unlikely but safe)
     }))
